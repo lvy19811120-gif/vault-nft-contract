@@ -49,6 +49,15 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
     /// @notice Variable to track the current epoch ID
     uint256 public currentEpochId;
 
+    /// @notice Total number of historical users
+    uint256 public totalHistoricalUsers;
+
+    /// @notice Total count of all deposit actions (deposits + extensions)
+    uint256 public totalDepositsCount;
+
+    /// @notice Sum of all lock durations (in seconds) ever created/extended
+    uint256 public totalDurationSum;
+
     /// @notice State variable to track if the vault is paused
     bool public paused = false;
 
@@ -78,6 +87,9 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
 
     /// @notice Mapping to track NFT counts per user per collection for efficient boost calculation.
     mapping(address => mapping(address => uint256)) public userNFTCounts;
+
+    /// @notice Mapping to track if a user has deposited
+    mapping(address => bool) private hasDeposited;
 
     /// @dev Struct for NFT lock information
     struct NFTLock {
@@ -127,7 +139,8 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
     /// @param user The address of the user who deposited the tokens.
     /// @param amount The amount of tokens deposited.
     /// @param fee The fee charged for the deposit.
-    event Deposited(address indexed user, uint256 amount, uint256 fee);
+    /// @param duration The lock duration in seconds.
+    event Deposited(address indexed user, uint256 amount, uint256 fee, uint256 duration);
 
     /// @notice Event emitted when a user's lock is extended.
     /// @param user The address of the user who extended the lock.
@@ -385,7 +398,16 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
         
         _distributeDepositFee(fee);
 
-        emit Deposited(msg.sender, _amount, fee);
+        if (!hasDeposited[msg.sender]) {
+            hasDeposited[msg.sender] = true;
+            totalHistoricalUsers++;
+        }
+
+        // Update Average Stats
+        totalDepositsCount++;
+        totalDurationSum += _duration;
+
+        emit Deposited(msg.sender, _amount, fee, _duration);
     }
 
     /**
@@ -435,6 +457,12 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
             );
             
             _distributeDepositFee(fee);
+        }
+
+        // Only update stats if duration is extended
+        if (_duration > 0) {
+             totalDepositsCount++;
+             totalDurationSum += _duration;
         }
     }
 
@@ -1217,6 +1245,15 @@ contract Vault is Initializable, ReentrancyGuardUpgradeable, IERC721Receiver, Ow
         }
         
         return totalBoost;
+    }
+
+    /**
+     * @notice Returns the average lock duration across all historical deposits.
+     * @return The average duration in seconds.
+     */
+    function getAverageLockDuration() external view returns (uint256) {
+        if (totalDepositsCount == 0) return 0;
+        return totalDurationSum / totalDepositsCount;
     }
 
     /**
